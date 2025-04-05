@@ -1,0 +1,10 @@
+{
+  "name": "NagApp",
+  "displayName": "NagApp",
+  "android": {
+    "package": "com.dlnagalla.nagappnewpure"
+  },
+  "ios": {
+    "bundleIdentifier": "com.dlnagalla.nagappnewpure"
+  }
+}
