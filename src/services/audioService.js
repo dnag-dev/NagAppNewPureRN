@@ -1,6 +1,6 @@
 import { Platform } from 'react-native';
 import AudioRecorderPlayer from 'react-native-audio-recorder-player';
-import Voice from '@react-native-voice/voice';
+import { Voice } from '@react-native-voice/voice';
 import Sound from 'react-native-sound';
 import { check, request, PERMISSIONS, RESULTS } from 'react-native-permissions';
 import RNFS from 'react-native-fs';
@@ -13,61 +13,61 @@ Sound.setMode('Default');
 class AudioService {
   constructor() {
     this.audioRecorderPlayer = new AudioRecorderPlayer();
-    this.recordingPath = Platform.select({
-      ios: 'audio.m4a',
-      android: 'audio.mp4',
-    });
+    this.voice = Voice;
     this.isRecording = false;
-    this.isPlaying = false;
-    this.silenceTimeout = null;
-    this.silenceThreshold = -50; // dB threshold for silence detection
-    this.silenceDuration = 1500; // ms of silence before stopping
-    this.noiseReductionEnabled = true;
-    this.currentSound = null;
-
-    // Initialize Voice recognition handlers
-    Voice.onSpeechStart = this.handleSpeechStart.bind(this);
-    Voice.onSpeechEnd = this.handleSpeechEnd.bind(this);
-    Voice.onSpeechResults = this.handleSpeechResults.bind(this);
-    Voice.onSpeechError = this.handleSpeechError.bind(this);
+    this.audioPath = null;
+    this.audioChunks = [];
+    this.speechDetected = false;
+    this.silenceTimer = null;
+    this.analyserNode = null;
+    this.audioContext = null;
+    this.mediaStreamSource = null;
+    this.isSafari = Platform.OS === 'ios';
+    this.onTranscription = null;
+    this.onAudioLevel = null;
+    this.consecutiveIdenticalTranscriptions = 0;
+    this.lastTranscription = '';
+    this.currentPlayer = null;
   }
 
   async initializeComponents() {
     try {
       console.log('Initializing audio components...');
       
-      // Request microphone permission
-      const permission = Platform.select({
-        ios: PERMISSIONS.IOS.MICROPHONE,
-        android: PERMISSIONS.ANDROID.RECORD_AUDIO,
-      });
-
-      console.log('Checking microphone permission...');
-      const result = await check(permission);
-      console.log('Permission status:', result);
+      // Check microphone permission
+      const permission = await check(PERMISSIONS.IOS.MICROPHONE);
+      console.log('Permission status:', permission);
       
-      if (result !== RESULTS.GRANTED) {
+      if (permission === RESULTS.DENIED) {
         console.log('Requesting microphone permission...');
-        const requestResult = await request(permission);
-        console.log('Permission request result:', requestResult);
-        
-        if (requestResult !== RESULTS.GRANTED) {
+        const result = await request(PERMISSIONS.IOS.MICROPHONE);
+        console.log('Permission request result:', result);
+        if (result !== RESULTS.GRANTED) {
           throw new Error('Microphone permission not granted');
         }
+      } else if (permission === RESULTS.BLOCKED) {
+        throw new Error('Microphone permission is blocked. Please enable it in settings.');
       }
 
-      // Initialize Voice recognition
-      const isVoiceAvailable = await Voice.isAvailable();
-      console.log('Voice recognition available:', isVoiceAvailable);
+      // Initialize voice recognition
+      const isAvailable = await this.voice.isAvailable();
+      console.log('Voice recognition available:', isAvailable);
       
-      if (!isVoiceAvailable) {
-        throw new Error('Voice recognition is not available on this device');
+      if (!isAvailable) {
+        throw new Error('Voice recognition is not available');
       }
 
-      // Configure audio recorder settings
-      await this.audioRecorderPlayer.setSubscriptionDuration(0.1); // 100ms
+      // Initialize audio recorder
+      await this.audioRecorderPlayer.setSubscriptionDuration(0.1);
+      this.audioRecorderPlayer.addRecordBackListener((e) => {
+        if (this.onAudioLevel) {
+          const level = Math.min(1, Math.max(0, e.currentMetering / 60));
+          this.onAudioLevel(level);
+        }
+      });
 
       console.log('Audio components initialized successfully');
+      return true;
     } catch (error) {
       console.error('Failed to initialize audio components:', error);
       throw error;
@@ -83,41 +83,32 @@ class AudioService {
 
       console.log('Starting recording...');
       this.isRecording = true;
+      this.audioChunks = [];
+      this.speechDetected = false;
 
-      const audioSet = Platform.select({
-        ios: {
-          AVFormatIDKey: 'aac',
-          AVSampleRateKey: 16000,
-          AVNumberOfChannelsKey: 1,
-          AVEncoderAudioQualityKey: 'high',
-        },
-        android: {
-          AudioEncoder: 3, // AAC
-          AudioSource: 6, // MIC
-          OutputFormat: 2, // MPEG_4
-          AudioSamplingRate: 16000,
-          AudioChannels: 1,
-          AudioEncodingBitRate: 128000,
-        },
+      // Start voice recognition
+      await this.voice.start('en-US');
+
+      // Start audio recording
+      const path = Platform.select({
+        ios: `${RNFS.DocumentDirectoryPath}/audio.m4a`,
+        android: `${RNFS.DocumentDirectoryPath}/audio.mp4`,
       });
-
-      // Start recording with audio monitoring
-      const uri = await this.audioRecorderPlayer.startRecorder(
-        this.recordingPath,
-        audioSet
-      );
-
-      // Start monitoring audio levels
-      this.audioRecorderPlayer.addRecordBackListener((e) => {
-        if (e.currentPosition > 0) {
-          this.handleAudioLevel(e.currentMetering);
+      
+      await this.audioRecorderPlayer.startRecorder(path);
+      this.audioPath = path;
+      
+      // Set maximum recording time
+      this.longRecordingTimer = setTimeout(() => {
+        if (this.isRecording) {
+          console.log('Maximum recording time reached');
+          this.stopRecording();
         }
-      });
+      }, 20000); // 20 seconds max
 
-      console.log('Recording started at:', uri);
-      return uri;
+      return path;
     } catch (error) {
-      console.error('Error starting recording:', error);
+      console.error('Failed to start recording:', error);
       this.isRecording = false;
       throw error;
     }
@@ -132,205 +123,103 @@ class AudioService {
 
       console.log('Stopping recording...');
       this.isRecording = false;
-      this.stopAudioLevelMonitoring();
-
-      const result = await this.audioRecorderPlayer.stopRecorder();
-      this.audioRecorderPlayer.removeRecordBackListener();
-      console.log('Recording stopped:', result);
-      return result;
-    } catch (error) {
-      console.error('Error stopping recording:', error);
-      throw error;
-    }
-  }
-
-  handleAudioLevel(metering) {
-    if (metering < this.silenceThreshold) {
-      if (!this.silenceTimeout) {
-        this.silenceTimeout = setTimeout(() => {
-          console.log('Silence detected, stopping recording...');
-          this.stopRecording();
-        }, this.silenceDuration);
-      }
-    } else {
-      if (this.silenceTimeout) {
-        clearTimeout(this.silenceTimeout);
-        this.silenceTimeout = null;
-      }
-    }
-  }
-
-  stopAudioLevelMonitoring() {
-    if (this.silenceTimeout) {
-      clearTimeout(this.silenceTimeout);
-      this.silenceTimeout = null;
-    }
-  }
-
-  async startVoiceRecognition() {
-    try {
-      await Voice.start('en-US');
-      console.log('Voice recognition started');
-    } catch (error) {
-      console.error('Error starting voice recognition:', error);
-      throw error;
-    }
-  }
-
-  async stopVoiceRecognition() {
-    try {
-      await Voice.stop();
-      console.log('Voice recognition stopped');
-    } catch (error) {
-      console.error('Error stopping voice recognition:', error);
-      throw error;
-    }
-  }
-
-  async playAudio(audioSource) {
-    try {
-      console.log('=== Starting Audio Playback Process ===');
-      console.log('Audio source:', audioSource);
       
-      if (this.isPlaying) {
-        console.log('Stopping current audio playback...');
+      // Clear timers
+      if (this.silenceTimer) {
+        clearTimeout(this.silenceTimer);
+        this.silenceTimer = null;
+      }
+      if (this.longRecordingTimer) {
+        clearTimeout(this.longRecordingTimer);
+        this.longRecordingTimer = null;
+      }
+
+      // Stop voice recognition
+      await this.voice.stop();
+
+      // Stop audio recording
+      await this.audioRecorderPlayer.stopRecorder();
+      this.audioRecorderPlayer.removeRecordBackListener();
+
+      // Verify the audio file exists and has content
+      if (this.audioPath) {
+        const fileInfo = await RNFS.stat(this.audioPath);
+        if (fileInfo.size < 1000) { // Less than 1KB is probably just noise
+          throw new Error('Audio too quiet or too short');
+        }
+        if (fileInfo.size > 25 * 1024 * 1024) { // 25MB limit
+          throw new Error('Audio too long');
+        }
+        return this.audioPath;
+      }
+
+      return null;
+    } catch (error) {
+      console.error('Failed to stop recording:', error);
+      throw error;
+    }
+  }
+
+  handleSilence() {
+    if (this.silenceTimer) {
+      clearTimeout(this.silenceTimer);
+    }
+    
+    this.silenceTimer = setTimeout(() => {
+      if (this.isRecording && this.speechDetected) {
+        console.log('Silence detected, stopping recording');
+        this.stopRecording();
+      }
+    }, 1500);
+  }
+
+  async playAudio(audioUrl) {
+    try {
+      console.log('Playing audio from URL:', audioUrl);
+      
+      // Stop any currently playing audio
+      if (this.currentPlayer) {
         await this.stopAudio();
       }
 
-      this.isPlaying = true;
-      
-      // Create a temporary file path with mp3 extension
-      const tempPath = `${RNFS.CachesDirectoryPath}/temp_audio_${Date.now()}.mp3`;
-      console.log('Temporary file path:', tempPath);
-      
-      try {
-        if (audioSource.startsWith('http')) {
-          // Handle URL-based audio
-          console.log('=== Starting Audio Download ===');
-          console.log('Downloading from URL:', audioSource);
-          
-          // First, verify the URL is accessible
-          console.log('Verifying URL accessibility...');
-          const headResponse = await fetch(audioSource, { method: 'HEAD' });
-          console.log('HEAD response status:', headResponse.status);
-          
-          if (!headResponse.ok) {
-            throw new Error(`Audio URL is not accessible: ${headResponse.status}`);
-          }
-          
-          const contentLength = headResponse.headers.get('content-length');
-          const contentType = headResponse.headers.get('content-type');
-          
-          console.log('Audio file metadata:', {
-            contentLength,
-            contentType
-          });
-          
-          if (!contentType || !contentType.includes('audio')) {
-            throw new Error('URL does not point to an audio file');
-          }
-          
-          console.log('Starting file download...');
-          const response = await RNFS.downloadFile({
-            fromUrl: audioSource,
-            toFile: tempPath,
-            progress: (response) => {
-              const progress = (response.bytesWritten / response.contentLength) * 100;
-              console.log(`Download progress: ${progress.toFixed(2)}%`);
-            }
-          }).promise;
-          
-          console.log('Download response status:', response.statusCode);
-          if (response.statusCode !== 200) {
-            throw new Error(`Failed to download audio: ${response.statusCode}`);
-          }
-          
-          console.log('Successfully downloaded audio file');
-        } else {
-          // Handle base64 audio
-          console.log('Writing base64 audio to file');
-          await RNFS.writeFile(tempPath, audioSource, 'base64');
-          console.log('Successfully wrote audio file');
-        }
-
-        // Verify file exists and has content
-        const fileStats = await RNFS.stat(tempPath);
-        console.log('File stats:', fileStats);
-        
-        if (!fileStats.isFile() || fileStats.size === 0) {
-          throw new Error('Downloaded file is invalid or empty');
-        }
-        
-        console.log('Audio file verified, size:', fileStats.size, 'bytes');
-        
-      } catch (writeError) {
-        console.error('Error processing audio file:', writeError);
-        throw writeError;
+      // Download the audio file if it's a URL
+      let audioPath = audioUrl;
+      if (audioUrl.startsWith('http')) {
+        const filename = audioUrl.split('/').pop();
+        audioPath = `${RNFS.DocumentDirectoryPath}/${filename}`;
+        await RNFS.downloadFile({
+          fromUrl: audioUrl,
+          toFile: audioPath,
+        }).promise;
       }
-      
-      return new Promise((resolve, reject) => {
-        console.log('=== Creating Sound Instance ===');
-        // Configure sound before loading
-        Sound.setCategory('Playback', true);
-        Sound.setMode('Default');
-        
-        console.log('Creating Sound instance with file:', tempPath);
-        
-        // Create a new Sound instance with the temporary file
-        this.currentSound = new Sound(tempPath, '', (error) => {
-          if (error) {
-            console.error('Error loading audio:', error);
-            this.isPlaying = false;
-            RNFS.unlink(tempPath).catch(err => 
-              console.error('Error deleting temporary file:', err)
-            );
-            reject(error);
-            return;
-          }
 
-          console.log('Audio loaded successfully');
-          console.log('Audio duration:', this.currentSound.getDuration(), 'seconds');
-          
-          // Configure playback settings
-          console.log('Configuring playback settings...');
-          this.currentSound.setCategory('Playback');
-          this.currentSound.setVolume(1.0);
-          this.currentSound.setNumberOfLoops(0);
-          
-          // Play the audio
-          console.log('Starting audio playback...');
-          this.currentSound.play((success) => {
-            console.log('Playback completed, success:', success);
-            this.isPlaying = false;
-            this.currentSound.release();
-            this.currentSound = null;
-            
-            // Clean up the temporary file
-            console.log('Cleaning up temporary file...');
-            RNFS.unlink(tempPath).catch(err => 
-              console.error('Error deleting temporary file:', err)
-            );
-            resolve(success);
-          });
+      // Play the audio
+      this.currentPlayer = new Sound(audioPath, '', (error) => {
+        if (error) {
+          console.error('Failed to load audio:', error);
+          return;
+        }
+        this.currentPlayer.play((success) => {
+          if (!success) {
+            console.error('Playback failed');
+          }
+          this.currentPlayer.release();
+          this.currentPlayer = null;
         });
       });
     } catch (error) {
-      console.error('Error in playAudio:', error);
-      this.isPlaying = false;
+      console.error('Failed to play audio:', error);
       throw error;
     }
   }
 
   async stopAudio() {
     try {
-      if (this.currentSound) {
-        console.log('Stopping current audio...');
-        this.currentSound.stop();
-        this.currentSound.release();
-        this.currentSound = null;
+      if (this.currentPlayer) {
+        this.currentPlayer.stop();
+        this.currentPlayer.release();
+        this.currentPlayer = null;
       }
-      this.isPlaying = false;
-      console.log('Audio stopped successfully');
     } catch (error) {
       console.error('Error stopping audio:', error);
       throw error;
@@ -338,45 +227,85 @@ class AudioService {
   }
 
   handleSpeechStart(e) {
-    console.log('Speech recognition started:', e);
+    console.log('Speech started', e);
+    this.speechDetected = true;
   }
 
   handleSpeechEnd(e) {
-    console.log('Speech recognition ended:', e);
+    console.log('Speech ended', e);
+    this.speechDetected = false;
   }
 
   handleSpeechResults(e) {
-    console.log('Speech recognition results:', e);
-    if (e.value && e.value.length > 0) {
+    console.log('Speech results', e);
+    if (this.onTranscription && e.value && e.value.length > 0) {
       const transcription = e.value[0];
-      console.log('Transcription:', transcription);
-      // You can emit an event or call a callback here if needed
+      if (transcription === this.lastTranscription) {
+        this.consecutiveIdenticalTranscriptions++;
+        if (this.consecutiveIdenticalTranscriptions >= 3) {
+          this.stopRecording();
+        }
+      } else {
+        this.consecutiveIdenticalTranscriptions = 0;
+      }
+      this.lastTranscription = transcription;
+      this.onTranscription(transcription);
     }
   }
 
   handleSpeechError(e) {
-    console.error('Speech recognition error:', e);
+    console.error('Speech error:', e);
   }
 
   async destroy() {
     try {
-      if (this.isPlaying) {
-        await this.stopAudio();
-      }
+      console.log('Destroying audio service...');
       
+      // Stop any ongoing recording
       if (this.isRecording) {
         await this.stopRecording();
       }
       
-      this.audioRecorderPlayer.removeRecordBackListener();
-      this.audioRecorderPlayer.removePlayBackListener();
-      Voice.destroy().then(Voice.removeAllListeners);
+      // Stop any playing audio
+      await this.stopAudio();
       
-      this.stopAudioLevelMonitoring();
+      // Stop voice recognition
+      await this.voice.destroy();
+      
+      // Clean up audio files
+      if (this.audioPath) {
+        await RNFS.unlink(this.audioPath).catch(() => {});
+      }
+      
+      // Reset state
+      this.isRecording = false;
+      this.audioPath = null;
+      this.audioChunks = [];
+      this.speechDetected = false;
+      this.silenceTimer = null;
+      this.analyserNode = null;
+      this.audioContext = null;
+      this.mediaStreamSource = null;
+      this.consecutiveIdenticalTranscriptions = 0;
+      this.lastTranscription = '';
+      this.currentPlayer = null;
       
       console.log('Audio service destroyed successfully');
     } catch (error) {
       console.error('Error destroying audio service:', error);
+      throw error;
+    }
+  }
+
+  async stopAll() {
+    try {
+      console.log('Stopping all audio services...');
+      await this.stopRecording();
+      await this.stopAudio();
+      console.log('All audio services stopped');
+    } catch (error) {
+      console.error('Error stopping all audio services:', error);
+      throw error;
     }
   }
 
@@ -449,4 +378,6 @@ class AudioService {
   }
 }
 
-export default new AudioService(); 
+// Export a singleton instance
+const audioService = new AudioService();
+export default audioService;

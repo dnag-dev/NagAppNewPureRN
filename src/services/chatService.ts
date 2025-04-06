@@ -1,13 +1,20 @@
-import RNFS from 'react-native-fs';
 import { Platform } from 'react-native';
-import { API_BASE_URL, API_ENDPOINTS, API_HEADERS, API_ERRORS } from '../config/azureApi';
+import RNFS from 'react-native-fs';
+import { API_BASE_URL, API_ENDPOINTS, API_HEADERS } from '../config/azureApi';
+
+interface ChatResponse {
+  text?: string;
+  audio_url: string;
+}
 
 class ChatService {
+  private isSafari: boolean;
+
   constructor() {
     this.isSafari = Platform.OS === 'ios';
   }
 
-  async transcribeAudio(audioPath) {
+  async transcribeAudio(audioPath: string): Promise<string> {
     try {
       const formData = new FormData();
       formData.append('file', {
@@ -32,7 +39,7 @@ class ChatService {
       });
 
       if (!response.ok) {
-        throw new Error(API_ERRORS.API_FAILURE);
+        throw new Error('Failed to transcribe audio');
       }
 
       const data = await response.json();
@@ -49,7 +56,7 @@ class ChatService {
     }
   }
 
-  async getChatResponse(text) {
+  async getChatResponse(text: string): Promise<ChatResponse> {
     try {
       const response = await fetch(`${API_BASE_URL}${API_ENDPOINTS.CHAT}`, {
         method: 'POST',
@@ -58,7 +65,7 @@ class ChatService {
       });
 
       if (!response.ok) {
-        throw new Error(API_ERRORS.API_FAILURE);
+        throw new Error('Failed to get chat response');
       }
 
       const data = await response.json();
@@ -66,14 +73,14 @@ class ChatService {
         throw new Error('No audio response received');
       }
 
-      return data;
+      return data as ChatResponse;
     } catch (error) {
       console.error('Chat error:', error);
       throw error;
     }
   }
 
-  async checkHealth() {
+  async checkHealth(): Promise<boolean> {
     try {
       const response = await fetch(`${API_BASE_URL}${API_ENDPOINTS.HEALTH}`, {
         headers: API_HEADERS

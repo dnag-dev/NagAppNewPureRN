@@ -1,66 +1,37 @@
-import { AZURE_API_URL } from '@env';
+import { AZURE_API_KEY, AZURE_API_URL } from '@env';
 
-// Azure API Configuration
-export const AZURE_API_BASE_URL = AZURE_API_URL || 'https://nag-app-new.azurewebsites.net';
+export const API_BASE_URL = AZURE_API_URL;
 
-export const AZURE_API_ENDPOINTS = {
-  chat: `${AZURE_API_BASE_URL}/chat`,
-  transcribe: `${AZURE_API_BASE_URL}/transcribe`,
-  textToSpeech: `${AZURE_API_BASE_URL}/text-to-speech`,
-  health: `${AZURE_API_BASE_URL}/health`,
+export const API_ENDPOINTS = {
+  CHAT: '/chat',
+  TRANSCRIBE: '/transcribe',
+  HEALTH: '/health'
 };
 
-export const AZURE_API_HEADERS = {
+export const API_HEADERS = {
   'Content-Type': 'application/json',
-  'Accept': 'application/json',
+  'x-api-key': AZURE_API_KEY
 };
 
-// API error messages
-export const AZURE_API_ERRORS = {
-  NO_API_URL: 'Azure API URL not configured. Please check your .env file.',
-  INVALID_RESPONSE: 'Invalid response from Azure API',
-  NETWORK_ERROR: 'Network error occurred while calling Azure API',
-  TRANSCRIPTION_ERROR: 'Error transcribing audio',
-  SPEECH_ERROR: 'Error generating speech',
-  HEALTH_CHECK_FAILED: 'Health check failed - API may be unavailable',
-  SERVER_ERROR: 'Server error occurred - please try again later',
+export const API_ERRORS = {
+  CONFIGURATION: 'Azure API configuration error',
+  API_FAILURE: 'Azure API request failed'
 };
 
-// Health check configuration
 export const HEALTH_CHECK_CONFIG = {
-  timeout: 5000, // 5 seconds
-  retries: 3,
-  retryDelay: 1000, // 1 second
+  timeout: 5000,
+  retries: 3
 };
 
-// Helper function to check API health
 export const checkApiHealth = async () => {
   try {
-    const response = await fetch(AZURE_API_ENDPOINTS.health, {
-      method: 'GET',
-      headers: AZURE_API_HEADERS,
+    const response = await fetch(`${API_BASE_URL}${API_ENDPOINTS.HEALTH}`, {
+      headers: API_HEADERS,
+      timeout: HEALTH_CHECK_CONFIG.timeout
     });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      return {
-        status: 'error',
-        message: errorData.error?.message || `Health check failed with status ${response.status}`,
-        details: errorData
-      };
-    }
-
-    const data = await response.json();
-    return {
-      status: 'connected',
-      message: 'API is healthy',
-      details: data
-    };
+    return response.ok;
   } catch (error) {
-    return {
-      status: 'error',
-      message: error.message || 'Failed to connect to API',
-      details: error
-    };
+    console.error('Health check failed:', error);
+    return false;
   }
 }; 

@@ -1,7 +1,7 @@
 import { NativeModules, NativeEventEmitter } from 'react-native';
 import Sound from 'react-native-sound';
 import Tts from 'react-native-tts';
-import Voice from '@react-native-voice/voice';
+import { Voice } from '@react-native-voice/voice';
 
 // Initialize modules with safe defaults
 let voiceEmitter = null;

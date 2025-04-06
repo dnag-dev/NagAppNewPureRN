@@ -1,30 +1,53 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Animated, SafeAreaView, StatusBar, Alert } from 'react-native';
+import { 
+  View, 
+  Text, 
+  TouchableOpacity, 
+  StyleSheet, 
+  Animated, 
+  SafeAreaView, 
+  StatusBar, 
+  ViewStyle,
+  TextStyle
+} from 'react-native';
 import RNFS from 'react-native-fs';
 import audioService from '../services/audioService';
 import chatService from '../services/chatService';
 import LinearGradient from 'react-native-linear-gradient';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 
-const HomeScreen = () => {
-  const [isRecording, setIsRecording] = useState(false);
-  const [transcription, setTranscription] = useState('');
-  const [audioLevel, setAudioLevel] = useState(0);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [error, setError] = useState(null);
-  const pulseAnim = useRef(new Animated.Value(1)).current;
-  const scaleAnim = useRef(new Animated.Value(1)).current;
+interface Styles {
+  container: ViewStyle;
+  gradient: ViewStyle;
+  content: ViewStyle;
+  title: TextStyle;
+  recordingContainer: ViewStyle;
+  recordingButton: ViewStyle;
+  button: ViewStyle;
+  recording: ViewStyle;
+  error: TextStyle;
+  transcription: TextStyle;
+}
+
+const HomeScreen: React.FC = () => {
+  const [isRecording, setIsRecording] = useState<boolean>(false);
+  const [transcription, setTranscription] = useState<string>('');
+  const [audioLevel, setAudioLevel] = useState<number>(0);
+  const [isProcessing, setIsProcessing] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+  const pulseAnim = useRef<Animated.Value>(new Animated.Value(1)).current;
+  const scaleAnim = useRef<Animated.Value>(new Animated.Value(1)).current;
 
   useEffect(() => {
-    const initializeAudio = async () => {
+    const initializeAudio = async (): Promise<void> => {
       try {
         await audioService.initializeComponents();
 
-        audioService.onTranscription = (text) => {
+        audioService.onTranscription = (text: string) => {
           setTranscription(text);
         };
 
-        audioService.onAudioLevel = (level) => {
+        audioService.onAudioLevel = (level: number) => {
           setAudioLevel(level);
         };
 
@@ -47,7 +70,7 @@ const HomeScreen = () => {
     };
   }, []);
 
-  const startRecording = async () => {
+  const startRecording = async (): Promise<void> => {
     try {
       setIsRecording(true);
       startPulseAnimation();
@@ -64,7 +87,7 @@ const HomeScreen = () => {
     }
   };
 
-  const stopRecording = async () => {
+  const stopRecording = async (): Promise<void> => {
     try {
       setIsRecording(false);
       stopPulseAnimation();
@@ -83,7 +106,7 @@ const HomeScreen = () => {
     }
   };
 
-  const processAudio = async (audioPath) => {
+  const processAudio = async (audioPath: string): Promise<void> => {
     try {
       setIsProcessing(true);
       setError(null);
@@ -103,7 +126,7 @@ const HomeScreen = () => {
     }
   };
 
-  const getAIResponse = async (text) => {
+  const getAIResponse = async (text: string): Promise<void> => {
     try {
       const response = await chatService.getChatResponse(text);
       if (response && response.audio_url) {
@@ -115,7 +138,7 @@ const HomeScreen = () => {
     }
   };
 
-  const startPulseAnimation = () => {
+  const startPulseAnimation = (): void => {
     Animated.loop(
       Animated.sequence([
         Animated.timing(pulseAnim, {
@@ -132,11 +155,11 @@ const HomeScreen = () => {
     ).start();
   };
 
-  const stopPulseAnimation = () => {
+  const stopPulseAnimation = (): void => {
     pulseAnim.setValue(1);
   };
 
-  const startScaleAnimation = () => {
+  const startScaleAnimation = (): void => {
     Animated.spring(scaleAnim, {
       toValue: 1.1,
       friction: 3,
@@ -145,7 +168,7 @@ const HomeScreen = () => {
     }).start();
   };
 
-  const stopScaleAnimation = () => {
+  const stopScaleAnimation = (): void => {
     Animated.spring(scaleAnim, {
       toValue: 1,
       friction: 3,
@@ -203,40 +226,49 @@ const HomeScreen = () => {
   );
 };
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create<Styles>({
   container: {
     flex: 1,
+    backgroundColor: '#1a1a1a',
   },
   gradient: {
     flex: 1,
+    width: '100%',
   },
   content: {
     flex: 1,
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'space-between',
     padding: 20,
+    paddingBottom: 40,
+    width: '100%',
   },
   title: {
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: 'bold',
-    color: 'white',
-    marginBottom: 40,
+    color: '#fff',
+    marginTop: 20,
     textAlign: 'center',
   },
   recordingContainer: {
     alignItems: 'center',
-    marginBottom: 30,
+    justifyContent: 'center',
+    flex: 1,
+    width: '100%',
   },
   recordingButton: {
-    marginBottom: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 120,
+    height: 120,
   },
   button: {
-    backgroundColor: '#007AFF',
     width: 80,
     height: 80,
     borderRadius: 40,
-    justifyContent: 'center',
+    backgroundColor: '#4a4a4a',
     alignItems: 'center',
+    justifyContent: 'center',
     elevation: 5,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
@@ -244,81 +276,22 @@ const styles = StyleSheet.create({
     shadowRadius: 3.84,
   },
   recording: {
-    backgroundColor: '#FF3B30',
-  },
-  audioLevelContainer: {
-    width: 200,
-    height: 4,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    borderRadius: 2,
-    overflow: 'hidden',
-  },
-  audioLevel: {
-    height: '100%',
-    backgroundColor: '#007AFF',
-    borderRadius: 2,
-  },
-  errorContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 20,
-    padding: 15,
-    backgroundColor: 'rgba(255, 59, 48, 0.1)',
-    borderRadius: 10,
-    width: '100%',
-  },
-  errorText: {
-    marginLeft: 10,
-    color: '#FF3B30',
-    fontSize: 16,
-  },
-  transcriptionContainer: {
-    marginTop: 20,
-    padding: 20,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    borderRadius: 15,
-    width: '100%',
-  },
-  transcriptionLabel: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: 'white',
-    marginBottom: 10,
-  },
-  transcriptionText: {
-    fontSize: 16,
-    color: 'white',
-    lineHeight: 24,
-  },
-  processingContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 20,
-    padding: 15,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    borderRadius: 10,
-  },
-  processingText: {
-    marginLeft: 10,
-    color: '#666',
-    fontSize: 16,
+    backgroundColor: '#ff4444',
   },
   error: {
-    color: '#FF3B30',
+    color: '#ff4444',
+    textAlign: 'center',
     marginTop: 20,
-    padding: 15,
-    backgroundColor: 'rgba(255, 59, 48, 0.1)',
-    borderRadius: 10,
-    width: '100%',
+    paddingHorizontal: 20,
   },
   transcription: {
-    color: 'white',
+    color: '#fff',
+    textAlign: 'center',
     marginTop: 20,
-    padding: 15,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    borderRadius: 10,
-    width: '100%',
+    paddingHorizontal: 20,
+    fontSize: 16,
+    lineHeight: 24,
   },
 });
 
-export default HomeScreen;
+export default HomeScreen; 

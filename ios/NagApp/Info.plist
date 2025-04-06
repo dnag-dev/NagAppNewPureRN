@@ -49,8 +49,8 @@
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<false/>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>NagApp needs access to your microphone to enable voice chat functionality.</string>
+	<string>We need access to your microphone to record audio for voice commands</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>NagApp needs access to speech recognition to enable voice chat functionality.</string>
+	<string>We need access to speech recognition to understand your voice commands</string>
 </dict>
 </plist>
